@@ -1,6 +1,8 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from .settings import settings
 from .database import init_db
@@ -29,5 +31,10 @@ app.include_router(timer.router)
 app.include_router(priority.router)
 app.include_router(links.router)
 
-# 프론트 정적 파일 서빙(배포 시)
-app.mount("/", StaticFiles(directory=settings.STATIC_DIR, html=True), name="static")
+# dist가 있을 때만 정적 서빙 + SPA fallback
+if settings.STATIC_DIR and os.path.exists(settings.STATIC_DIR):
+    app.mount("/", StaticFiles(directory=settings.STATIC_DIR, html=True), name="static")
+
+    @app.get("/{full_path:path}")
+    def spa_fallback(full_path: str):
+        return FileResponse(os.path.join(settings.STATIC_DIR, "index.html"))
