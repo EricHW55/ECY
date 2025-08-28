@@ -1,0 +1,18 @@
+ecy-alba/
+  backend/
+    app/
+      __init__.py
+      main.py            # FastAPI 엔트리
+      settings.py        # 환경변수 로딩(.env)
+      database.py        # DB 엔진/세션/초기화
+      models.py          # SQLModel 테이블
+      deps.py            # 공통 DI(세션, 인증 등)
+      admin.py           # SQLAdmin 설정(/admin)
+      routers/
+        __init__.py
+        sessions.py      # 타이머(시작/정지/수정/목록)
+        priority.py      # 우선순위 CRUD + CSV import/export
+        links.py         # 링크 CRUD
+    requirements.txt
+    .env.example
+  frontend/              # (나중에 Vite/React 빌드 결과 dist/를 여기에 연결)
