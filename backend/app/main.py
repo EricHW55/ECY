@@ -1,4 +1,5 @@
 import os
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -31,10 +32,17 @@ app.include_router(timer.router)
 app.include_router(priority.router)
 app.include_router(links.router)
 
-# dist가 있을 때만 정적 서빙 + SPA fallback
-if settings.STATIC_DIR and os.path.exists(settings.STATIC_DIR):
-    app.mount("/", StaticFiles(directory=settings.STATIC_DIR, html=True), name="static")
 
-    @app.get("/{full_path:path}")
-    def spa_fallback(full_path: str):
-        return FileResponse(os.path.join(settings.STATIC_DIR, "index.html"))
+# 프론트 dist가 있을 때만 mount + SPA fallback
+if settings.STATIC_DIR:
+    try:
+        if os.path.exists(settings.STATIC_DIR):
+            app.mount("/", StaticFiles(directory=settings.STATIC_DIR, html=True), name="static")
+
+            @app.get("/{full_path:path}")
+            def spa_fallback(full_path: str):
+                return FileResponse(os.path.join(settings.STATIC_DIR, "index.html"))
+        else:
+            logging.warning(f"STATIC_DIR not found: {settings.STATIC_DIR} (mount skipped)")
+    except Exception as e:
+        logging.exception(f"STATIC_DIR mount failed: {e}")
