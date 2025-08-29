@@ -1,22 +1,34 @@
 # backend/app/database.py
+import os
 from pathlib import Path
+from urllib.parse import urlparse
 from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy import text
+from .settings import settings, BASE_DIR
 
-# 프로젝트 루트 기준으로 절대 경로 안전하게
-BASE_DIR = Path(__file__).resolve().parent.parent  # backend/app/ → backend/
-DATA_DIR = BASE_DIR / "data"
-DATA_DIR.mkdir(exist_ok=True)                      # 폴더 없으면 생성
-DB_PATH = DATA_DIR / "ecy.db"                      # 파일명 마음대로
 
-DATABASE_URL = f"sqlite:///{DB_PATH}"
+DATABASE_URL = settings.DATABASE_URL
 
 # SQLite는 기본적으로 스레드 제한이 있어서 이 옵션을 켭니다.
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    connect_args=connect_args,
     pool_pre_ping=True,
 )
+
+
+# sqlite + 프로젝트 내부 상대경로일 때만 폴더 생성(서버 절대경로는 건드리지 않음)
+try:
+    parsed = urlparse(DATABASE_URL)
+    if parsed.scheme == "sqlite":
+        db_path = Path(parsed.path)
+        if db_path.is_relative_to(BASE_DIR):
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
+
+
 
 def init_db() -> None:
     """앱 시작 시 1회 호출 → 파일/테이블/인덱스 생성 + PRAGMA 튜닝"""
