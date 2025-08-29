@@ -4,3 +4,4 @@ sqlmodel
 sqladmin
 pydantic-settings
 python-multipart
+psycopg[binary]>=3.1
