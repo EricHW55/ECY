@@ -1,78 +1,31 @@
-import type { WorkSession } from '../types/workSession'
+// src/services/timer.ts
+import type { WorkSession } from '../types/workSession';
+import { http } from '../lib/http';
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? '' // 프록시 쓰면 ''이면 됨.
+// ===== API =====
+export const startTimer = () =>
+    http.post<WorkSession>('/timer/start');
 
-type Query = Record<string, string | number | boolean | undefined | null>
+export const stopTimer = () =>
+    http.post<WorkSession>('/timer/stop');
 
-function qs(params?: Query) {
-    if (!params) return ''
-    const s = new URLSearchParams()
-    Object.entries(params).forEach(([k, v]) => {
-        if (v !== undefined && v !== null) s.append(k, String(v))
-    })
-    const str = s.toString()
-    return str ? `?${str}` : ''
-}
+export const listSessions = (p?: { year?: number; month?: number }) =>
+    http.get<WorkSession[]>('/timer', p);
 
-async function asJson<T>(res: Response): Promise<T> {
-    if (!res.ok) {
-        let msg = `HTTP ${res.status}`
-        try {
-            const data = await res.json()
-            if (data?.detail) msg = data.detail
-        } catch {}
-        throw new Error(msg)
-    }
-    return res.json() as Promise<T>
-}
+export const listThisMonth = () => listSessions();
 
-export async function startTimer(): Promise<WorkSession> {
-    const res = await fetch(`${API_BASE}/timer/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}), // memo 안 쓰면 빈 바디
-    })
-    return asJson<WorkSession>(res)
-}
+export const monthlySummary = (year: number, month: number) =>
+    http.get<{ year: number; month: number; total_minutes: number }>(
+        '/timer/summary',
+        { year, month },
+    );
 
-export async function stopTimer(): Promise<WorkSession> {
-    const res = await fetch(`${API_BASE}/timer/stop`, { method: 'POST' })
-    return asJson<WorkSession>(res)
-}
-
-export async function listSessions(params?: { year?: number; month?: number }): Promise<WorkSession[]> {
-    const res = await fetch(`${API_BASE}/timer${qs(params)}`)
-    return asJson<WorkSession[]>(res)
-}
-
-export const listThisMonth = () => listSessions()
-
-// (선택) 합계, 수정/삭제도 필요하면 같이 사용
-export async function monthlySummary(year: number, month: number) {
-    const res = await fetch(`${API_BASE}/timer/summary${qs({ year, month })}`)
-    return asJson<{ year: number; month: number; total_minutes: number }>(res)
-}
-
-export async function updateSession(
+export const updateSession = (
     sid: number,
-    body: { started_at: string; ended_at: string; memo?: string | null },
-    adminCode?: string
-) {
-    const res = await fetch(`${API_BASE}/timer/${sid}`, {
-        method: 'PUT',
-        headers: {
-            'Content-Type': 'application/json',
-            ...(adminCode ? { 'X-ADMIN-CODE': adminCode } : {}),
-        },
-        body: JSON.stringify(body),
-    })
-    return asJson<WorkSession>(res)
-}
+    body: { started_at: string; ended_at: string | null; memo?: string | null },
+    adminCode?: string,
+) =>
+    http.put<WorkSession>(`/timer/${sid}`, body, adminCode ? { 'X-ADMIN-CODE': adminCode } : undefined);
 
-export async function deleteSession(sid: number, adminCode?: string) {
-    const res = await fetch(`${API_BASE}/timer/${sid}`, {
-        method: 'DELETE',
-        headers: adminCode ? { 'X-ADMIN-CODE': adminCode } : undefined,
-    })
-    return asJson<{ ok: true }>(res)
-}
+export const deleteSession = (sid: number, adminCode?: string) =>
+    http.del<{ ok: true }>(`/timer/${sid}`, adminCode ? { 'X-ADMIN-CODE': adminCode } : undefined);
