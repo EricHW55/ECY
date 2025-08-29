@@ -1,5 +1,5 @@
-import os
-import logging
+import os, sys, logging
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -9,6 +9,12 @@ from .settings import settings
 from .database import init_db
 from .routers import priority, links, timer
 from .admin import setup_admin
+
+
+# 디버그
+logging.info(f"CWD={os.getcwd()}")
+logging.info(f"sys.path={sys.path}")
+
 
 app = FastAPI(title=settings.APP_NAME)
 
