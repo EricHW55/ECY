@@ -1,96 +1,154 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { WorkSession } from '../../types/workSession'
-import { startTimer, stopTimer, listThisMonth } from '../../services/timer'
-import { fmtYM, fmtMD, fmtHMS } from '../../utils/datetime'
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { WorkSession } from '../../types/workSession';
+import { startTimer, stopTimer, listSessions } from '../../services/timer';
+import { fmtYM, fmtMD, fmtHMS } from '../../utils/datetime';
+import { fmtMinutes, calcTotalMinutes, minutesBetween } from '../../utils/timecalc';
 
 export default function MainPage() {
-    const [rows, setRows] = useState<WorkSession[]>([])
-    const [loading, setLoading] = useState(false)
-    const [error, setError] = useState<string | null>(null)
+    // 선택된 연/월 상태
+    const now = new Date();
+    const [ym, setYM] = useState<{ year: number; month: number }>({
+        year: now.getFullYear(),
+        month: now.getMonth() + 1,
+    });
 
-    const reload = async () => {
+    const [rows, setRows] = useState<WorkSession[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const getErrorMessage = (e: unknown) =>
+        e instanceof Error ? e.message : String(e);
+
+    // 데이터 로드
+    const reload = async (y = ym.year, m = ym.month) => {
         try {
-            setLoading(true)
-            setError(null)
-            const data = await listThisMonth()
-            setRows(data)
-        } catch (e: any) {
-            setError(e?.message ?? '목록 불러오기 실패')
+            setLoading(true);
+            setError(null);
+            const data = await listSessions({ year: y, month: m });
+            setRows(data);
+        } catch (e: unknown) {
+            setError(getErrorMessage(e) ?? '목록 불러오기 실패');
         } finally {
-            setLoading(false)
+            setLoading(false);
         }
-    }
+    };
 
     useEffect(() => {
-        void reload()
-    }, [])
+        void reload();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [ym.year, ym.month]);
 
-    const isRunning = useMemo(() => rows.some(r => !r.ended_at), [rows])
+    // 진행 여부/총합
+    const isRunning = useMemo(() => rows.some(r => !r.ended_at), [rows]);
+    const totalMinutes = useMemo(() => calcTotalMinutes(rows), [rows]);
 
-    const headerYM = rows[0] ? fmtYM(rows[0].started_at) : fmtYM(new Date())
+    // month 피커용
+    const monthInputRef = useRef<HTMLInputElement>(null);
+    const openMonthPicker = () => {
+        const el = monthInputRef.current;
+        if (!el) return;
 
-    const fmtMinutes = (mins: number) => {
-        const h = Math.floor(mins / 60)
-        const m = mins % 60
-        if (h === 0) return `${mins}분`
-        if (m === 0) return `${h}시간`
-        return `${h}시간 ${m}분`
-    }
+        if (typeof el.showPicker === 'function') {
+            el.showPicker();   // Chromium: 네이티브 month picker
+        } else {
+            el.focus();
+            el.click();        // 기타 브라우저: 기본 동작
+        }
+    };
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const monthValue = `${ym.year}-${pad(ym.month)}`;
 
-    const totalMinutes = useMemo(() => {
-        return rows.reduce((sum, r) => {
-            if (typeof r.minutes === 'number') return sum + r.minutes
-            if (r.started_at && r.ended_at) {
-                const ms = new Date(r.ended_at).getTime() - new Date(r.started_at).getTime()
-                return sum + Math.max(0, Math.floor(ms / 60000))
-            }
-            return sum
-        }, 0)
-    }, [rows])
+    const isOtherMonth = (ym: {year: number; month: number}) => {
+        const now = new Date();
+        return ym.year !== now.getFullYear() || ym.month !== now.getMonth() + 1;
+    };
+
+    const toThisMonth = (setYM: (v:{year:number; month:number}) => void) => {
+        const now = new Date();
+        setYM({ year: now.getFullYear(), month: now.getMonth() + 1 });
+    };
 
     const onStart = async () => {
         try {
-            setLoading(true)
-            setError(null)
-            await startTimer()
-            await reload()
-        } catch (e: any) {
-            setError(e?.message ?? '시작 실패')
+            setLoading(true);
+            setError(null);
+
+            await startTimer(); // 서버에 실제 시작 기록
+
+            if (isOtherMonth(ym)) {
+                // 다른 달을 보고 있었다면 → 이번 달로 이동
+                toThisMonth(setYM); // <- ym 변경 → useEffect가 reload() 호출
+            } else {
+                // 이미 이번 달이면 바로 새로고침
+                await reload();
+            }
+        } catch (e: unknown) {
+            setError(getErrorMessage(e) ?? '시작 실패');
         } finally {
-            setLoading(false)
+            setLoading(false);
         }
-    }
+    };
 
     const onStop = async () => {
         try {
-            setLoading(true)
-            setError(null)
-            await stopTimer()
-            await reload()
-        } catch (e: any) {
-            setError(e?.message ?? '정지 실패')
+            setLoading(true);
+            setError(null);
+            await stopTimer();
+            await reload();
+        } catch (e: unknown) {
+            setError(getErrorMessage(e) ?? '정지 실패');
         } finally {
-            setLoading(false)
+            setLoading(false);
         }
-    }
+    };
 
-    const headerCells = ['날짜', '시작', '종료', '시간']
+    const headerCells = ['날짜', '시작', '종료', '시간'];
 
     return (
         <div style={{ maxWidth: 720, margin: '40px auto', fontFamily: 'sans-serif' }}>
             <h1 style={{ marginBottom: 8, textAlign: 'center' }}>ECY 알바 타이머</h1>
 
-            {/* 좌: YYYY.MM(조금 오른쪽으로), 우: 총합(조금 왼쪽으로) */}
+            {/* 좌: YYYY.MM 버튼(월 선택), 우: 총합 */}
             <div
                 style={{
                     display: 'flex',
                     alignItems: 'baseline',
                     marginBottom: 12,
-                    paddingLeft: 12,   // YYYY.MM 살짝 오른쪽
-                    paddingRight: 12,  // 총합 살짝 왼쪽
+                    paddingLeft: 12,
+                    paddingRight: 12,
+                    gap: 8,
                 }}
             >
-                <strong style={{ fontSize: 18, color: '#444' }}>{headerYM}</strong>
+                <button
+                    onClick={openMonthPicker}
+                    style={{
+                        fontSize: 18,
+                        fontWeight: 700,
+                        color: '#444',
+                        border: '1px solid #ddd',
+                        background: '#fff',
+                        borderRadius: 8,
+                        padding: '4px 10px',
+                        cursor: 'pointer',
+                    }}
+                    aria-label="월 선택"
+                    title="월 선택"
+                >
+                    {fmtYM(new Date(ym.year, ym.month - 1, 1))}
+                </button>
+
+                {/* 화면에 보이지 않는 month input (네이티브 피커) */}
+                <input
+                    ref={monthInputRef}
+                    type="month"
+                    value={monthValue}
+                    onChange={(e) => {
+                        const [y, m] = e.target.value.split('-').map(Number);
+                        setYM({ year: y, month: m });
+                    }}
+                    style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', width: 0, height: 0 }}
+                />
+
                 <strong
                     style={{
                         marginLeft: 'auto',
@@ -106,7 +164,7 @@ export default function MainPage() {
             <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={onStart} disabled={loading || isRunning}>시작</button>
                 <button onClick={onStop} disabled={loading || !isRunning}>정지</button>
-                <button onClick={reload} disabled={loading}>새로고침</button>
+                <button onClick={() => reload()} disabled={loading}>새로고침</button>
             </div>
 
             {error && <p style={{ color: 'crimson', marginTop: 12 }}>{error}</p>}
@@ -123,18 +181,11 @@ export default function MainPage() {
                 <tbody>
                 {rows.length > 0
                     ? rows.map((r) => {
-                        const running = !r.ended_at
+                        const running = !r.ended_at;
                         const minutes =
                             typeof r.minutes === 'number'
                                 ? r.minutes
-                                : (r.started_at && r.ended_at
-                                    ? Math.max(
-                                        0,
-                                        Math.floor(
-                                            (new Date(r.ended_at).getTime() - new Date(r.started_at).getTime()) / 60000
-                                        )
-                                    )
-                                    : 0)
+                                : minutesBetween(r.started_at, r.ended_at);
 
                         return (
                             <tr
@@ -151,7 +202,7 @@ export default function MainPage() {
                                     {running ? '…' : fmtMinutes(minutes)}
                                 </td>
                             </tr>
-                        )
+                        );
                     })
                     : (!loading && (
                         <tr>
@@ -159,10 +210,9 @@ export default function MainPage() {
                                 이번 달 기록이 없습니다.
                             </td>
                         </tr>
-                    ))
-                }
+                    ))}
                 </tbody>
             </table>
         </div>
-    )
+    );
 }
