@@ -8,20 +8,16 @@ import {
     uncompletePriorityItem,
 } from "../../services/priorityApi";
 import type { CreatePriorityPayload, PriorityItemOut } from "../../types/priorityTypes";
-import {
-    WEEKS,
-    pad2,
-    formatHHMM,
-    formatYM,
-    parseNaiveISOString,
-    badgeStyle,
-    statusLabel,
-    computeTotals,
-} from "../../utils/priorityHelpers";
+
+import { badgeStyle, statusLabel, computeTotals } from "../../utils/priorityHelpers";
 import { getAdminCode, setAdminCode, clearAdminCode } from "../../utils/adminHeaders";
+import { useIsNarrow } from "../../utils/responsive";
+import { dueTextOf, remainTextOf, effectiveDisplayOf, parseLinksInput } from "../../utils/priorityUi";
+import { DEFAULT_CREATE_PAYLOAD } from "../../types/priorityDefaults";
+import { control } from "./styles";
 
 export default function PriorityPage() {
-    const now = new Date();
+    const narrow = useIsNarrow(420);
 
     const [items, setItems] = useState<PriorityItemOut[]>([]);
     const [loading, setLoading] = useState(false);
@@ -31,20 +27,30 @@ export default function PriorityPage() {
     const [admin, setAdmin] = useState<string | null>(getAdminCode());
     const [needAdmin, setNeedAdmin] = useState(false);
 
-    // 추가 폼
-    const [showAdd, setShowAdd] = useState(false);
-    const [form, setForm] = useState<CreatePriorityPayload>({
-        book: "",
-        due_weekday: 0,
-        due_hour: 18,
-        due_minute: 0,
-        flags: { answer: false, listening: false },
-        links: [],
-        memo: "",
+    // DEFAULT는 얕은 복사로 새 인스턴스 생성
+    const freshPayload = (): CreatePriorityPayload => ({
+        ...DEFAULT_CREATE_PAYLOAD,
+        flags: { ...DEFAULT_CREATE_PAYLOAD.flags },
+        links: [...DEFAULT_CREATE_PAYLOAD.links],
     });
+
+    const [showAdd, setShowAdd] = useState(false);
+    const [form, setForm] = useState<CreatePriorityPayload>(freshPayload());
     const [linksInput, setLinksInput] = useState("");
 
+    // 시/분: 지우기 가능하도록 문자열 상태로 별도 관리
+    const [hourStr, setHourStr] = useState<string>(String(DEFAULT_CREATE_PAYLOAD.due_hour));
+    const [minStr, setMinStr] = useState<string>(String(DEFAULT_CREATE_PAYLOAD.due_minute));
+
     const totals = useMemo(() => computeTotals(items), [items]);
+
+    // 유틸: 숫자 보정
+    const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+    const parseClamp = (s: string, lo: number, hi: number) => {
+        const n = parseInt(s, 10);
+        if (Number.isNaN(n)) return 0;
+        return clamp(n, lo, hi);
+    };
 
     async function load() {
         setLoading(true);
@@ -61,7 +67,6 @@ export default function PriorityPage() {
 
     useEffect(() => {
         load();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     async function handleToggleComplete(it: PriorityItemOut) {
@@ -91,22 +96,26 @@ export default function PriorityPage() {
 
     async function handleAdd() {
         if (!form.book.trim()) return alert("책 이름을 입력하세요.");
-        const links = linksInput
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean);
+
+        // 사용자가 비워둔 경우 0으로, 범위 보정
+        const due_hour = parseClamp(hourStr, 0, 23);
+        const due_minute = parseClamp(minStr, 0, 59);
+
+        const links = parseLinksInput(linksInput);
         try {
-            await createPriorityItem({ ...form, links, memo: form.memo?.trim() || undefined });
-            setShowAdd(false);
-            setForm({
-                book: "",
-                due_weekday: 0,
-                due_hour: 18,
-                due_minute: 0,
-                flags: { answer: false, listening: false },
-                links: [],
-                memo: "",
+            await createPriorityItem({
+                ...form,
+                due_hour,
+                due_minute,
+                links,
+                memo: form.memo?.trim() || undefined,
             });
+
+            setShowAdd(false);
+            const fresh = freshPayload();
+            setForm(fresh);
+            setHourStr(String(fresh.due_hour));
+            setMinStr(String(fresh.due_minute));
             setLinksInput("");
             await load();
         } catch (e: any) {
@@ -134,36 +143,67 @@ export default function PriorityPage() {
         }
     }
 
+    // 요일 셀렉트: 화살표/오른쪽 여백 커스텀
+    const SELECT_BG =
+        "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='gray'%3E%3Cpath d='M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.08 1.04l-4.25 4.25a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z'/%3E%3C/svg%3E";
+    const selectStyle: React.CSSProperties = {
+        ...control,
+        paddingRight: 28,
+        background: `white url(${SELECT_BG}) no-repeat right 10px center`,
+        appearance: "none" as any,
+        WebkitAppearance: "none",
+        MozAppearance: "none",
+    };
+
     return (
         <div style={{ maxWidth: 520, margin: "0 auto", padding: 12 }}>
-            {/* 헤더 */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between", marginBottom: 8 }}>
-                <div>
-                    <div style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.1 }}>ECY 채점 우선순위</div>
-                    <div style={{ fontSize: 11, color: "#6b7280" }}>
-                        총합 <b>{totals.total}</b>개 · 오버듀{" "}
-                        <b style={{ color: "#dc2626" }}>{totals.overdue}</b>
+            {/* 헤더: 제목 + 우측에 통계, 관리자 */}
+            <div
+                style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    marginBottom: 8,
+                }}
+            >
+                {/* 왼쪽: 제목 + 통계 (한 줄 고정) */}
+                <div
+                    style={{
+                        display: "flex",
+                        alignItems: "baseline",
+                        gap: 10,
+                        whiteSpace: "nowrap",      // 줄바꿈 방지
+                        overflow: "hidden",        // 혹시 좁을 때 깔끔히
+                        textOverflow: "ellipsis",
+                        flex: "1 1 auto",
+                        minWidth: 0,
+                    }}
+                >
+                    <div style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.1, flexShrink: 0 }}>
+                        채점 우선순위
+                    </div>
+                    <div style={{ fontSize: 12, color: "#6b7280", flexShrink: 0 }}>
+                        총합 <b>{totals.total}</b>개 · 연체 <b style={{ color: "#dc2626" }}>{totals.overdue}</b>
                     </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ background: "#f3f4f6", borderRadius: 999, padding: "6px 10px", fontSize: 12, fontWeight: 700 }}>
-            {formatYM(now)}
-          </span>
-                    <button
-                        onClick={openAdminPrompt}
-                        title={admin ? "관리자 코드 설정됨" : "관리자 코드 입력"}
-                        style={{
-                            border: "1px solid #d1d5db",
-                            borderRadius: 8,
-                            background: admin ? "#eef2ff" : "white",
-                            color: admin ? "#4338ca" : "#374151",
-                            padding: "6px 10px",
-                            fontSize: 12,
-                        }}
-                    >
-                        🔑 {admin ? "관리자" : "코드"}
-                    </button>
-                </div>
+
+                {/* 오른쪽: 관리자 버튼만 (월 배지 제거) */}
+                <button
+                    onClick={openAdminPrompt}
+                    title={admin ? "관리자 코드 설정됨" : "관리자 코드 입력"}
+                    style={{
+                        border: "1px solid #d1d5db",
+                        borderRadius: 8,
+                        background: admin ? "#eef2ff" : "white",
+                        color: admin ? "#4338ca" : "#374151",
+                        padding: "6px 10px",
+                        fontSize: 12,
+                        flex: "0 0 auto",
+                    }}
+                >
+                    🔑 {admin ? "관리자" : "코드"}
+                </button>
             </div>
 
             {/* 검색 + 버튼 */}
@@ -172,14 +212,7 @@ export default function PriorityPage() {
                     placeholder="책 이름 검색"
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
-                    style={{
-                        flex: 1,
-                        height: 40,
-                        border: "1px solid #d1d5db",
-                        borderRadius: 10,
-                        padding: "0 12px",
-                        fontSize: 14,
-                    }}
+                    style={{ ...control, height: 40 }}
                 />
                 <button
                     onClick={load}
@@ -215,8 +248,12 @@ export default function PriorityPage() {
                 <button
                     onClick={load}
                     style={{
-                        width: 44, height: 44, borderRadius: 12,
-                        border: "1px solid #d1d5db", background: "white", fontSize: 18
+                        width: 44,
+                        height: 44,
+                        borderRadius: 12,
+                        border: "1px solid #d1d5db",
+                        background: "white",
+                        fontSize: 18,
                     }}
                     aria-label="새로고침"
                 >
@@ -224,7 +261,7 @@ export default function PriorityPage() {
                 </button>
             </div>
 
-            {/* 추가 폼 (바텀시트 느낌) */}
+            {/* 추가 폼 */}
             {showAdd && (
                 <div
                     style={{
@@ -233,68 +270,89 @@ export default function PriorityPage() {
                         padding: 12,
                         marginBottom: 12,
                         boxShadow: "0 6px 20px rgba(0,0,0,0.06)",
+                        overflow: "hidden",
                     }}
                 >
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                        <label style={{ display: "flex", flexDirection: "column", fontSize: 13 }}>
+                    <div
+                        style={{
+                            display: "grid",
+                            gridTemplateColumns: narrow ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)",
+                            gap: 10,
+                        }}
+                    >
+                        <label style={{ display: "flex", flexDirection: "column", fontSize: 13, minWidth: 0 }}>
                             <span style={{ marginBottom: 6, fontWeight: 600 }}>책</span>
                             <input
                                 value={form.book}
                                 onChange={(e) => setForm({ ...form, book: e.target.value })}
-                                placeholder="예: 천재 중3 듣기"
-                                style={{ border: "1px solid #d1d5db", borderRadius: 10, padding: "10px 12px", fontSize: 14 }}
+                                placeholder="예: Let's go 4"
+                                style={control}
                             />
                         </label>
 
-                        <label style={{ display: "flex", flexDirection: "column", fontSize: 13 }}>
+                        <label style={{ display: "flex", flexDirection: "column", fontSize: 13, minWidth: 0 }}>
                             <span style={{ marginBottom: 6, fontWeight: 600 }}>요일</span>
                             <select
                                 value={form.due_weekday}
                                 onChange={(e) => setForm({ ...form, due_weekday: Number(e.target.value) })}
-                                style={{ border: "1px solid #d1d5db", borderRadius: 10, padding: "10px 12px", fontSize: 14 }}
+                                style={selectStyle}
                             >
-                                {WEEKS.map((w, i) => (
-                                    <option key={i} value={i}>
-                                        {w}
-                                    </option>
-                                ))}
+                                <option value={0}>월</option>
+                                <option value={1}>화</option>
+                                <option value={2}>수</option>
+                                <option value={3}>목</option>
+                                <option value={4}>금</option>
+                                <option value={5}>토</option>
+                                <option value={6}>일</option>
                             </select>
                         </label>
 
-                        <label style={{ display: "flex", flexDirection: "column", fontSize: 13 }}>
+                        <label style={{ display: "flex", flexDirection: "column", fontSize: 13, minWidth: 0 }}>
                             <span style={{ marginBottom: 6, fontWeight: 600 }}>시간</span>
                             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                {/* 지우기 가능한 시 입력 */}
                                 <input
-                                    type="number"
-                                    min={0}
-                                    max={23}
-                                    value={form.due_hour}
-                                    onChange={(e) => setForm({ ...form, due_hour: Number(e.target.value) })}
-                                    style={{ flex: 1, border: "1px solid #d1d5db", borderRadius: 10, padding: "10px 12px", fontSize: 14 }}
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder="0"
+                                    value={hourStr}
+                                    onChange={(e) => setHourStr(e.target.value.replace(/\D/g, "").slice(0, 2))}
+                                    onBlur={() => {
+                                        const v = String(parseClamp(hourStr, 0, 23));
+                                        setHourStr(v);
+                                        setForm((f) => ({ ...f, due_hour: parseInt(v, 10) }));
+                                    }}
+                                    style={{ ...control, flex: 1 }}
                                 />
-                                :
+                                <span>:</span>
+                                {/* 지우기 가능한 분 입력 */}
                                 <input
-                                    type="number"
-                                    min={0}
-                                    max={59}
-                                    value={form.due_minute}
-                                    onChange={(e) => setForm({ ...form, due_minute: Number(e.target.value) })}
-                                    style={{ flex: 1, border: "1px solid #d1d5db", borderRadius: 10, padding: "10px 12px", fontSize: 14 }}
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder="0"
+                                    value={minStr}
+                                    onChange={(e) => setMinStr(e.target.value.replace(/\D/g, "").slice(0, 2))}
+                                    onBlur={() => {
+                                        const v = String(parseClamp(minStr, 0, 59));
+                                        setMinStr(v);
+                                        setForm((f) => ({ ...f, due_minute: parseInt(v, 10) }));
+                                    }}
+                                    style={{ ...control, flex: 1 }}
                                 />
                             </div>
                         </label>
 
-                        <label style={{ display: "flex", flexDirection: "column", fontSize: 13 }}>
+                        <label style={{ display: "flex", flexDirection: "column", fontSize: 13, minWidth: 0 }}>
                             <span style={{ marginBottom: 6, fontWeight: 600 }}>링크(콤마로 구분)</span>
                             <input
                                 placeholder="https://..., https://..."
                                 value={linksInput}
                                 onChange={(e) => setLinksInput(e.target.value)}
-                                style={{ border: "1px solid #d1d5db", borderRadius: 10, padding: "10px 12px", fontSize: 14 }}
+                                style={control}
                             />
                         </label>
 
-                        <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 14 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 14, minWidth: 0 }}>
                             <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                 <input
                                     type="checkbox"
@@ -313,12 +371,12 @@ export default function PriorityPage() {
                             </label>
                         </div>
 
-                        <label style={{ gridColumn: "1 / span 2", display: "flex", flexDirection: "column", fontSize: 13 }}>
+                        <label style={{ gridColumn: "1 / -1", display: "flex", flexDirection: "column", fontSize: 13, minWidth: 0 }}>
                             <span style={{ marginBottom: 6, fontWeight: 600 }}>메모</span>
                             <textarea
                                 value={form.memo || ""}
                                 onChange={(e) => setForm({ ...form, memo: e.target.value })}
-                                style={{ minHeight: 80, border: "1px solid #d1d5db", borderRadius: 10, padding: "10px 12px", fontSize: 14 }}
+                                style={{ ...control, minHeight: 80, resize: "vertical" }}
                             />
                         </label>
                     </div>
@@ -346,7 +404,7 @@ export default function PriorityPage() {
                 </div>
             )}
 
-            {/* 목록 (카드형) */}
+            {/* 목록 */}
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {loading && (
                     <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 14, textAlign: "center", color: "#6b7280" }}>
@@ -362,9 +420,9 @@ export default function PriorityPage() {
 
                 {!loading &&
                     items.map((it) => {
-                        const eff = parseNaiveISOString(it.effective_due_at);
-                        const dueText = `${WEEKS[it.due_weekday]} ${formatHHMM(it.due_hour, it.due_minute)}`;
-                        const remain = it.minutes_until_due >= 0 ? `${it.minutes_until_due}분 후` : `${Math.abs(it.minutes_until_due)}분 지남`;
+                        const dueText = dueTextOf(it);
+                        const remain = remainTextOf(it.minutes_until_due);
+                        const effText = effectiveDisplayOf(it.effective_due_at);
 
                         return (
                             <div key={it.id} style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
@@ -384,16 +442,14 @@ export default function PriorityPage() {
                                 </div>
 
                                 <div style={{ fontSize: 13, color: "#374151", marginBottom: 6 }}>
-                                    <div>마감: <b>{dueText}</b></div>
-                                    <div style={{ color: "#6b7280" }}>
-                                        표시시각 {eff.getMonth() + 1}/{eff.getDate()} {pad2(eff.getHours())}:{pad2(eff.getMinutes())} · {remain}
+                                    <div>
+                                        마감: <b>{dueText}</b>
                                     </div>
+                                    <div style={{ color: "#6b7280" }}>표시시각 {effText} · {remain}</div>
                                 </div>
 
                                 {it.memo && (
-                                    <div style={{ fontSize: 13, color: "#374151", marginTop: 6, whiteSpace: "pre-wrap" }}>
-                                        {it.memo}
-                                    </div>
+                                    <div style={{ fontSize: 13, color: "#374151", marginTop: 6, whiteSpace: "pre-wrap" }}>{it.memo}</div>
                                 )}
 
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
@@ -444,7 +500,17 @@ export default function PriorityPage() {
             </div>
 
             {err && (
-                <div style={{ marginTop: 12, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", padding: 10, borderRadius: 10, fontSize: 13 }}>
+                <div
+                    style={{
+                        marginTop: 12,
+                        border: "1px solid #fecaca",
+                        background: "#fef2f2",
+                        color: "#b91c1c",
+                        padding: 10,
+                        borderRadius: 10,
+                        fontSize: 13,
+                    }}
+                >
                     {err}
                 </div>
             )}
