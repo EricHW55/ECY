@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { WorkSession } from '../../types/workSession';
 import { startTimer, stopTimer, listSessions } from '../../services/timer';
 import { fmtYM, fmtMD, fmtHMS } from '../../utils/datetime';
@@ -19,24 +19,29 @@ export default function MainPage() {
     const getErrorMessage = (e: unknown) =>
         e instanceof Error ? e.message : String(e);
 
-    // 데이터 로드
-    const reload = async (y = ym.year, m = ym.month) => {
+    // 데이터 리로드
+    const reload = useCallback(async () => {
         try {
             setLoading(true);
             setError(null);
-            const data = await listSessions({ year: y, month: m });
+            const data = await listSessions({ year: ym.year, month: ym.month });
             setRows(data);
         } catch (e: unknown) {
             setError(getErrorMessage(e) ?? '목록 불러오기 실패');
         } finally {
             setLoading(false);
         }
-    };
-
+    }, [ym.year, ym.month]); // ← ym에 의존
     useEffect(() => {
         void reload();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [reload]);
+
+    // 연 월 선택창 이전 정보 저장
+    const prevYMRef = useRef<{ year: number; month: number }>(ym);
+    useEffect(() => {
+        prevYMRef.current = ym;
     }, [ym.year, ym.month]);
+
 
     // 진행 여부/총합
     const isRunning = useMemo(() => rows.some(r => !r.ended_at), [rows]);
@@ -143,6 +148,13 @@ export default function MainPage() {
                     type="month"
                     value={monthValue}
                     onChange={(e) => {
+                        const v = e.target.value;       // '' or 'YYYY-MM'
+                        if (!v) {
+                            // 지우기 방지: 이전 값으로 되돌림
+                            const p = prevYMRef.current;
+                            e.target.value = `${p.year}-${String(p.month).padStart(2,'0')}`;
+                            return;
+                        }
                         const [y, m] = e.target.value.split('-').map(Number);
                         setYM({ year: y, month: m });
                     }}
